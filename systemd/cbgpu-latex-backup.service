@@ -2,7 +2,10 @@
 Description=CBGPU LaTeX private backup
 [Service]
 Type=oneshot
-WorkingDirectory=@REPOSITORY@/backend/latex
-ExecStart=@REPOSITORY@/backend/latex/.venv/bin/python @REPOSITORY@/backend/latex/backup.py
+WorkingDirectory=@LATEX_SOURCE@
+Environment=CBGPU_LATEX_SOURCE=@LATEX_SOURCE@
+Environment=CBGPU_LATEX_PRIVATE=@LATEX_PRIVATE@
+EnvironmentFile=-%h/.config/cbgpu/latex-rust.env
+ExecStart=@LATEX_BINARY@ backup --apply
 UMask=0077
 TimeoutStartSec=1800

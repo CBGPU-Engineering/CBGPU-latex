@@ -3,7 +3,7 @@
 [![CI](https://github.com/CBGPU-Engineering/CBGPU-latex/actions/workflows/ci.yml/badge.svg)](https://github.com/CBGPU-Engineering/CBGPU-latex/actions/workflows/ci.yml)
 [![License: AGPL 3.0](https://img.shields.io/badge/License-AGPL%203.0-blue)](LICENSE)
 
-Overleaf Community Edition integration for CBGPU: authenticated project access,
+Rust/Axum Overleaf Community Edition integration for CBGPU: authenticated project access,
 ZIP import, main-document/compiler selection, trash synchronization and a
 separate resource-limited TeX compile broker. This is not Overleaf Server Pro.
 
@@ -12,15 +12,20 @@ separate resource-limited TeX compile broker. This is not Overleaf Server Pro.
 ```bash
 git clone https://github.com/CBGPU-Engineering/CBGPU-latex.git
 cd CBGPU-latex
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python -m unittest discover -s . -p test_zip_import.py
-.venv/bin/python -m unittest discover -s . -p test_http_dependencies.py
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+npm ci
+npm run check
+npm run build
 ```
 
-The ZIP and HTTP dependency tests are local. The compiler/restore integration
-checks require Docker and dedicated test infrastructure; they are not part of
-the credential-free PR suite.
+ZIP/security tests use synthetic local files, including archives above the old
+50 MB/150 MB limits. `cargo test --locked --test gateway_postgres -- --ignored`
+uses its own disconnected PostgreSQL container and fake loopback editor. The
+real compile isolation test additionally requires the reviewed pinned TeX image:
+`cargo test --locked --test compiler_sandbox -- --ignored`. Neither suite mounts
+existing project volumes or connects to the production database.
 
 ## Deployment
 
@@ -31,6 +36,13 @@ layout and private state under `backend/private/latex`.
 
 Read [integration, compile limits, source offer and backup details](docs/INTEGRATION.md)
 before deploying. Do not copy private project files or credentials into Git.
+
+The native service is a **candidate**, not an automatic production cutover.
+Build with `cargo build --locked --release`. Its `gateway` and `compiler`
+commands replace the old service processes; maintenance commands default to a
+plan and require `--apply`. Back up and validate the private PostgreSQL migration
+and read-only legacy session import before switching any installed unit. Existing
+Overleaf/Mongo project IDs, owners, files and memberships are never reset.
 
 ## License
 

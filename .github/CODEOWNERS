@@ -1,5 +1,5 @@
 # Request reviews for application/source changes, not dependency-only bot PRs.
-*.py @lmwmason
+*.rs @lmwmason
 *.mjs @lmwmason
 *.cjs @lmwmason
 *.js @lmwmason
