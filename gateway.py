@@ -178,14 +178,18 @@ async def proxy(req):
  if '\\' in decoded or '\x00' in decoded or '//' in decoded or any(segment in ('.','..') for segment in decoded.split('/')):raise web.HTTPBadRequest(text='Invalid resource path')
  if req.path=='/healthz':return answer({'status':'ok','service':'cbgpu-latex'})
  if req.path=='/cbgpu/logo.png':return web.FileResponse(ROOT.parent/'FrontEnd/cbgpu/public/img/cbgpu-logo.png')
- if req.path=='/cbgpu/editor.js':return web.FileResponse(Path(__file__).parent/'editor.js',headers={'Cache-Control':'no-cache'})
+ if req.path=='/cbgpu/editor.js':return web.FileResponse(Path(__file__).parent/'dist'/'editor.js',headers={'Cache-Control':'no-cache'})
  if req.path=='/cbgpu/editor.css':return web.FileResponse(Path(__file__).parent/'editor.css',headers={'Cache-Control':'no-cache'})
  if req.path in ('/cbgpu/source','/cbgpu/source.zip'):
   buffer=io.BytesIO()
   with zipfile.ZipFile(buffer,'w',zipfile.ZIP_DEFLATED) as archive:
-   for source in [*Path(__file__).parent.iterdir(),*(Path(__file__).parent/'systemd').iterdir()]:
-    if source.is_file() and source.suffix in ('.py','.mjs','.js','.sh','.css','.yml','.txt','.md','.service','.timer') or source.name in ('LICENSE','bridge-run'):
-     if source.is_file():archive.write(source,'cbgpu-latex/'+str(source.relative_to(Path(__file__).parent)))
+   base=Path(__file__).parent
+   for source in base.rglob('*'):
+    relative=source.relative_to(base)
+    if any(part in {'.git','node_modules','.venv','__pycache__','private','dist'} for part in relative.parts):continue
+    if not source.is_file():continue
+    if source.suffix in ('.py','.mts','.ts','.cts','.sh','.css','.yml','.yaml','.txt','.md','.service','.timer','.toml') or source.name in ('LICENSE','bridge-run','package.json','package-lock.json','tsconfig.json'):
+     archive.write(source,'cbgpu-latex/'+str(relative))
   return web.Response(body=buffer.getvalue(),headers={'Content-Type':'application/zip','Content-Disposition':'attachment; filename="cbgpu-latex-source.zip"'})
 
  session=await session_for(req)

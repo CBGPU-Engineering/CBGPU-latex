@@ -37,3 +37,9 @@ before deploying. Do not copy private project files or credentials into Git.
 This integration retains [AGPL-3.0](LICENSE). Overleaf CE and TeX packages retain
 their own licenses; keep the corresponding source offer and notices. It is not
 relicensed by the Apache-2.0 license used for other CBGPU components.
+
+
+Maintained Node.js adapters and the editor integration use TypeScript. Run
+`npm ci`, `npm run check` and `npm run build` before starting Compose. The pinned
+Overleaf image loads the generated `dist/` adapters at its original module paths.
+Generated JavaScript is excluded from source control.

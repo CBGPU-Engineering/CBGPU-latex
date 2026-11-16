@@ -59,7 +59,7 @@ function _writeFileEntry(zipfile, entry, destFile, callback) {
 function _isZipTooLarge(source) {
   return new Promise((resolve, reject) => {
     let settled = false
-    const done = (err, result) => {
+    const done = (err: unknown, result?: boolean) => {
       if (settled) return
       settled = true
       if (err) reject(err)
@@ -126,9 +126,9 @@ function _isZipTooLarge(source) {
 }
 
 function _extractZipFiles(source, destination) {
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     let settled = false
-    const done = err => {
+    const done = (err?: unknown) => {
       if (settled) return
       settled = true
       if (err) reject(err)

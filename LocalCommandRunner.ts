@@ -9,7 +9,7 @@ function call(path,body,callback){
   let out='';res.on('data',c=>{out+=c;if(out.length>5000000)request.destroy()});res.on('end',()=>{try{const result=JSON.parse(out);if(res.statusCode!==200)throw Error(result.error||'Compile service failed');callback(null,result)}catch(e){callback(e)}})
  });request.on('error',callback);request.end(JSON.stringify(body));return request
 }
-const runner={
+const runner: Record<string,any>={
  run(projectId,command,directory,image,timeout,environment,compileGroup,cwd,callback){
   const id=randomUUID();let done=false
   jobs.set(id,call('/run',{id,projectId,command,directory,timeout,cwd,environment},(err,result)=>{
@@ -18,7 +18,7 @@ const runner={
    callback(err,result)
   }));return id
  },
- kill(id,cb=()=>{}){call('/kill',{id},err=>cb(err))},
+ kill(id,cb=((...args:any[])=>{})){call('/kill',{id},err=>cb(err))},
  canRunSyncTeXInOutputDir(){return true},
 }
 runner.promises={run:promisify(runner.run),kill:promisify(runner.kill)}

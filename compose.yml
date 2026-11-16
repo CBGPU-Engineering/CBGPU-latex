@@ -38,10 +38,10 @@ services:
       - ../private/latex/run:/cbgpu/run
       - ../private/latex/imports:/cbgpu/imports
       - ../private/latex/bridge-key:/cbgpu/bridge-key:ro
-      - ./LocalCommandRunner.js:/overleaf/services/clsi/app/js/LocalCommandRunner.js:ro
+      - ./dist/LocalCommandRunner.js:/overleaf/services/clsi/app/js/LocalCommandRunner.js:ro
       - ./upload-limits.sh:/etc/my_init.d/210_cbgpu_upload_limits.sh:ro
-      - ./ArchiveManager.mjs:/overleaf/services/web/app/src/Features/Uploads/ArchiveManager.mjs:ro
-      - ./bridge.mjs:/overleaf/services/web/cbgpu-bridge.mjs:ro
+      - ./dist/ArchiveManager.mjs:/overleaf/services/web/app/src/Features/Uploads/ArchiveManager.mjs:ro
+      - ./dist/bridge.mjs:/overleaf/services/web/cbgpu-bridge.mjs:ro
       - ./bridge-run:/etc/service/cbgpu-bridge/run:ro
     networks: [latex, edge]
     mem_limit: 5g
