@@ -21,4 +21,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s . -p test_zip_import.py
       - run: python -m unittest discover -s . -p test_http_dependencies.py
-      - run: node scripts/check-publication.mjs
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: node scripts/check-publication.mts

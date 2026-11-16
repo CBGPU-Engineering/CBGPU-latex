@@ -12,3 +12,5 @@ __pycache__/
 .venv/
 /dist/
 /release-artifacts/
+
+node_modules/
