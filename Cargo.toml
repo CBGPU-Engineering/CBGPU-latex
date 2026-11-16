@@ -9,7 +9,7 @@ license = "AGPL-3.0-only"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli", "deflate"] }
-tokio-tungstenite = "0.28"
+tokio-tungstenite = "0.29"
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
