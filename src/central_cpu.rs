@@ -207,6 +207,33 @@ impl CentralCPU {
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
             .map_err(|_| "Cannot protect CPU admission")?;
         let p = directory.join(format!("{project}.json"));
+        // Only an UNUSED pending admission can expire locally: SQL acquire occurs
+        // after claim moves it to a separate immutable claimed file.
+        let _pending_guard = ClaimLock::new(directory.join(format!("{project}.claim-lock")))?;
+        if p.exists() {
+            let mut f = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(&p)
+                .map_err(|_| "Cannot inspect pending admission")?;
+            if f.metadata().map_err(|_| "Invalid pending admission")?.len() > 65536 {
+                return Err("Invalid pending admission size".into());
+            }
+            let mut bytes = Vec::new();
+            f.read_to_end(&mut bytes)
+                .map_err(|_| "Cannot read pending admission")?;
+            let old = verified(
+                &self.private,
+                &serde_json::from_slice(&bytes).map_err(|_| "Invalid pending admission")?,
+            )?;
+            if old["project_id"] != project
+                || old["owner_id"] != owner
+                || old["expires_at"].as_f64().unwrap_or(f64::INFINITY) >= crate::store::now()
+            {
+                return Err("Compile admission already pending; retry after expiry".into());
+            }
+            std::fs::remove_file(&p).map_err(|_| "Cannot clear expired unused admission")?;
+        }
         let mut random = [0u8; 32];
         getrandom::fill(&mut random).map_err(|_| "Private CPU randomness unavailable")?;
         let nonce = hex::encode(random);
