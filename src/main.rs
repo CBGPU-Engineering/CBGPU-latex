@@ -151,7 +151,10 @@ async fn run() -> Result<()> {
     }
     let store = Store {
         pool,
-        account_v2: std::env::var("CBGPU_ACCOUNT_V2").as_deref() == Ok("1"),
+        account_v2: cbgpu_latex::store::scoped_identity_enabled(
+            std::env::var("CBGPU_ACCOUNT_V2").ok().as_deref(),
+            std::env::var("CBGPU_MULTISCHOOL_V1").ok().as_deref(),
+        ),
     };
     if action == "export-legacy" {
         if !args.iter().any(|v| v == "--quiescent") {

@@ -7,6 +7,12 @@ pub struct Store {
     pub pool: PgPool,
     pub account_v2: bool,
 }
+/// Multi-school membership must not restore the legacy global approval gate.
+/// Project identity and school compute remain separate inside the SQL oracle.
+pub fn scoped_identity_enabled(account_v2: Option<&str>, multi_school: Option<&str>) -> bool {
+    account_v2 == Some("1") || multi_school == Some("1")
+}
+
 pub fn now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -201,5 +207,19 @@ impl Store {
           }
           tx.commit().map_err(|_|"Cannot commit transient rollback mirror")?;Ok(output.len())
         }).await.map_err(|_|"Transient rollback worker failed")?
+    }
+}
+
+#[cfg(test)]
+mod identity_configuration_tests {
+    use super::scoped_identity_enabled;
+    #[test]
+    fn either_explicit_rollout_uses_scoped_identity_without_enabling_compute() {
+        assert!(scoped_identity_enabled(None, Some("1")));
+        assert!(scoped_identity_enabled(Some("1"), None));
+        assert!(scoped_identity_enabled(Some("0"), Some("1")));
+        assert!(!scoped_identity_enabled(None, None));
+        assert!(!scoped_identity_enabled(Some("0"), Some("0")));
+        assert!(!scoped_identity_enabled(Some("true"), Some("yes")));
     }
 }
