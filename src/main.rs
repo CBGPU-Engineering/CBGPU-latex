@@ -111,6 +111,7 @@ async fn run() -> Result<()> {
             limit: Arc::new(Semaphore::new(3)),
         };
         return axum::serve(listener, state.router())
+            .with_graceful_shutdown(cbgpu_latex::shutdown::signal())
             .await
             .map_err(|_| "Compile broker failed".into());
     }
@@ -227,7 +228,7 @@ async fn run() -> Result<()> {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|_| "LaTeX gateway port unavailable; existing service was preserved")?;
-    axum::serve(listener, state.router())
+    cbgpu_latex::shutdown::serve(listener, state.router())
         .await
         .map_err(|_| "Native LaTeX gateway failed".into())
 }

@@ -8,6 +8,7 @@ Environment=CBGPU_LATEX_PRIVATE=@LATEX_PRIVATE@
 Environment=CBGPU_ACCOUNT_V2=0
 EnvironmentFile=-%h/.config/cbgpu/latex-rust.env
 ExecStart=@LATEX_BINARY@ gateway
+TimeoutStopSec=infinity
 Restart=on-failure
 RestartSec=5
 UMask=0077
