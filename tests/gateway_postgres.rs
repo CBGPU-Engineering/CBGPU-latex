@@ -258,6 +258,46 @@ async fn postgres_handoff_project_privacy_cookie_boundary_revalidation_and_impor
         account_v2: false,
     };
     assert!(!legacy.authorized(OTHER, OTHER_SESSION, false).await);
+    assert!(legacy.authorized(USER, SESSION, false).await);
+    store
+        .put(
+            "incoming",
+            "suspended-owner-continuity",
+            &json!({"user_id":USER,"name":"retained.zip","size":10,"received":5}),
+            now() + 3600.,
+        )
+        .await
+        .unwrap();
+    db.sql(&format!(
+        "UPDATE public.profiles SET account_status='SUSPENDED' WHERE id='{USER}';"
+    ));
+    assert!(!legacy.authorized(USER, SESSION, false).await);
+    assert!(!store.authorized(USER, SESSION, false).await);
+    assert!(
+        store
+            .get("incoming", "suspended-owner-continuity")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    db.sql(&format!(
+        "UPDATE public.profiles SET account_status='ACTIVE' WHERE id='{USER}';"
+    ));
+    assert!(legacy.authorized(USER, SESSION, false).await);
+    assert!(store.authorized(USER, SESSION, false).await);
+    db.sql(&format!(
+        "UPDATE auth.sessions SET not_after=now()-interval '1 second' WHERE id='{SESSION}';"
+    ));
+    assert!(!legacy.authorized(USER, SESSION, false).await);
+    assert!(!store.authorized(USER, SESSION, false).await);
+    db.sql(&format!("UPDATE auth.sessions SET not_after=NULL WHERE id='{SESSION}';UPDATE auth.users SET banned_until=now()+interval '1 hour' WHERE id='{USER}';"));
+    assert!(!legacy.authorized(USER, SESSION, false).await);
+    assert!(!store.authorized(USER, SESSION, false).await);
+    db.sql(&format!(
+        "UPDATE auth.users SET banned_until=NULL WHERE id='{USER}';"
+    ));
+    assert!(legacy.authorized(USER, SESSION, false).await);
+
     let private = tempfile::tempdir().unwrap();
     std::fs::create_dir(private.path().join("imports")).unwrap();
     let fake = Fake {

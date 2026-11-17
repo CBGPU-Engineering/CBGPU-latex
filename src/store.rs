@@ -9,8 +9,30 @@ pub struct Store {
 }
 /// Multi-school membership must not restore the legacy global approval gate.
 /// Project identity and school compute remain separate inside the SQL oracle.
-pub fn scoped_identity_enabled(account_v2: Option<&str>, multi_school: Option<&str>) -> bool {
-    account_v2 == Some("1") || multi_school == Some("1")
+pub fn scoped_identity_enabled(
+    account_v2: Option<&str>,
+    multi_school: Option<&str>,
+) -> Result<bool> {
+    let mut enabled = false;
+    for value in [account_v2, multi_school].into_iter().flatten() {
+        match value {
+            "" | "0" | "false" => {}
+            "1" | "true" => enabled = true,
+            _ => return Err("Invalid LaTeX authorization configuration".into()),
+        }
+    }
+    Ok(enabled)
+}
+pub fn scoped_identity_from_environment() -> Result<bool> {
+    let values = ["CBGPU_ACCOUNT_V2", "CBGPU_MULTISCHOOL_V1"]
+        .into_iter()
+        .map(|key| match std::env::var(key) {
+            Ok(v) => Ok(Some(v)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(_) => Err("Invalid LaTeX authorization configuration".to_string()),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    scoped_identity_enabled(values[0].as_deref(), values[1].as_deref())
 }
 
 pub fn now() -> f64 {
@@ -215,11 +237,15 @@ mod identity_configuration_tests {
     use super::scoped_identity_enabled;
     #[test]
     fn either_explicit_rollout_uses_scoped_identity_without_enabling_compute() {
-        assert!(scoped_identity_enabled(None, Some("1")));
-        assert!(scoped_identity_enabled(Some("1"), None));
-        assert!(scoped_identity_enabled(Some("0"), Some("1")));
-        assert!(!scoped_identity_enabled(None, None));
-        assert!(!scoped_identity_enabled(Some("0"), Some("0")));
-        assert!(!scoped_identity_enabled(Some("true"), Some("yes")));
+        assert!(scoped_identity_enabled(None, Some("1")).unwrap());
+        assert!(scoped_identity_enabled(Some("1"), None).unwrap());
+        assert!(scoped_identity_enabled(Some("0"), Some("1")).unwrap());
+        assert!(!scoped_identity_enabled(None, None).unwrap());
+        assert!(!scoped_identity_enabled(Some("0"), Some("0")).unwrap());
+        for bad in ["yes", "TRUE", "FALSE", " 0", "1 "] {
+            assert!(scoped_identity_enabled(Some("true"), Some(bad)).is_err());
+        }
+        assert!(scoped_identity_enabled(Some("false"), Some("true")).unwrap());
+        assert!(!scoped_identity_enabled(Some(""), None).unwrap());
     }
 }

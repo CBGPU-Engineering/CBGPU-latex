@@ -58,3 +58,11 @@ Maintained Node.js adapters and the editor integration use TypeScript. Run
 `npm ci`, `npm run check` and `npm run build` before starting Compose. The pinned
 Overleaf image loads the generated `dist/` adapters at its original module paths.
 Generated JavaScript is excluded from source control.
+
+
+Scoped identity accepts server `CBGPU_ACCOUNT_V2` and `CBGPU_MULTISCHOOL_V1`:
+unset, empty, `0`, and `false` preserve legacy mode; `1` or `true` on either
+select scoped identity. Whitespace, case variants and other values stop startup,
+even when the other flag is enabled. Project identity remains distinct from
+compute permission. Suspension, expired sessions and account bans deny gateway
+identity in every mode without deleting project or transient upload records.

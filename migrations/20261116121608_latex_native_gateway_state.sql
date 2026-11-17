@@ -32,6 +32,8 @@ BEGIN
  AND (s.not_after IS NULL OR s.not_after>now()) AND u.deleted_at IS NULL
  AND (u.banned_until IS NULL OR u.banned_until<=now());
  IF profile IS NULL THEN RETURN false; END IF;
+ -- Suspension is an identity denial in every mode, never a project deletion.
+ IF profile->>'account_status'='SUSPENDED' THEN RETURN false; END IF;
  IF NOT account_v2 THEN RETURN coalesce((profile->>'is_approved')::boolean,true); END IF;
  IF coalesce(profile->>'account_status','ACTIVE') NOT IN ('ACTIVE','PENDING_VERIFICATION','REVERIFICATION_REQUIRED') THEN RETURN false; END IF;
  -- Identity/project continuity is independent of school compute entitlement.
