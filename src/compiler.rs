@@ -1,6 +1,12 @@
 //! Private Unix-socket broker; TeX sees only a read-only source snapshot.
 use crate::Result;
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -408,9 +414,15 @@ impl Compiler {
         Router::new()
             .route("/run", post(run))
             .route("/kill", post(kill))
+            .route("/healthz", get(health))
             .layer(axum::extract::DefaultBodyLimit::max(65536))
             .with_state(self)
     }
+}
+async fn health(State(state): State<Compiler>) -> Json<Value> {
+    Json(
+        json!({"status":"ok","service":"cbgpu-latex-compiler","queued_or_running":state.jobs.lock().await.len(),"occupied_slots":3usize.saturating_sub(state.limit.available_permits())}),
+    )
 }
 async fn run(State(state): State<Compiler>, Json(data): Json<Value>) -> axum::response::Response {
     let job = match validate(&state.private, &data) {

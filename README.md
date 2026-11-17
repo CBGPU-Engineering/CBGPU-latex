@@ -37,11 +37,14 @@ layout and private state under `backend/private/latex`.
 Read [integration, compile limits, source offer and backup details](docs/INTEGRATION.md)
 before deploying. Do not copy private project files or credentials into Git.
 
-The native service is a **candidate**, not an automatic production cutover.
+The production gateway, compile broker and backup service run native Rust after
+a verified, idle handoff on 2026-11-17. Source checkout/install commands never
+automatically migrate an existing service.
 Build with `cargo build --locked --release`. Its `gateway` and `compiler`
 commands replace the old service processes; maintenance commands default to a
-plan and require `--apply`. Back up and validate the private PostgreSQL migration
-and read-only legacy session import before switching any installed unit. Existing
+plan and require `--apply`. Follow the reviewed handoff/rollback procedure in
+the integration guide, including backup, PostgreSQL authorization and quiescent
+legacy-state import. Existing
 Overleaf/Mongo project IDs, owners, files and memberships are never reset.
 
 ## License

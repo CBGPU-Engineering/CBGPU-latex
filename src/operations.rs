@@ -104,6 +104,13 @@ async fn capture_to(args: &[&str], path: &Path, database: Option<&str>) -> Resul
     Ok(())
 }
 pub async fn backup(private: &Path, database: &str) -> Result<PathBuf> {
+    backup_inner(private, Some(database)).await
+}
+/// Pre-cutover backup without requiring an already migrated native state DB.
+pub async fn backup_legacy(private: &Path) -> Result<PathBuf> {
+    backup_inner(private, None).await
+}
+async fn backup_inner(private: &Path, database: Option<&str>) -> Result<PathBuf> {
     use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::fs::PermissionsExt;
     let lock = std::fs::OpenOptions::new()
@@ -136,9 +143,11 @@ pub async fn backup(private: &Path, database: &str) -> Result<PathBuf> {
   capture_to(&["docker","exec","cbgpu-latex-mongo","mongodump","--archive","--gzip","--oplog"],&partial.join("mongo.archive.gz"),None).await?;
   capture_to(&["docker","exec","cbgpu-latex-overleaf","tar","--exclude=data/compiles","--exclude=data/cache","-czf","-","-C","/var/lib/overleaf","data"],&partial.join("files.tar.gz"),None).await?;
   capture_to(&["docker","exec","cbgpu-latex-redis","sh","-c","redis-cli SAVE >/dev/null && cat /data/dump.rdb"],&partial.join("redis.rdb"),None).await?;
+  if let Some(database)=database {
   let pool=sqlx::postgres::PgPoolOptions::new().max_connections(1).connect(database).await.map_err(|_|"Cannot connect private gateway backup state")?;
   write_state_backup(&pool,&partial.join("gateway-postgres.copy")).await?;pool.close().await;
   std::fs::write(partial.join("gateway-schema.sql"),include_str!("../migrations/20261116121608_latex_native_gateway_state.sql")).map_err(|_|"Cannot save gateway schema")?;
+  }
   let archive=std::fs::File::open(partial.join("files.tar.gz")).map_err(|_|"Cannot verify files backup")?;let mut tar=tar::Archive::new(flate2::read::GzDecoder::new(archive));for entry in tar.entries().map_err(|_|"Invalid files backup")?{let mut entry=entry.map_err(|_|"Corrupt files backup")?;std::io::copy(&mut entry,&mut std::io::sink()).map_err(|_|"Corrupt files backup data")?;}
   for name in ["bridge-key","overleaf.env","compiler-image"]{std::fs::copy(private.join(name),partial.join(name)).map_err(|_|"Cannot back up private configuration")?;}
   if private.join("gateway.sqlite").exists(){let source=rusqlite::Connection::open_with_flags(private.join("gateway.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|_|"Cannot read legacy gateway backup")?;let mut target=rusqlite::Connection::open(partial.join("gateway.sqlite")).map_err(|_|"Cannot create legacy gateway backup")?;rusqlite::backup::Backup::new(&source,&mut target).map_err(|_|"Cannot start legacy backup")?.run_to_completion(100,std::time::Duration::from_millis(10),None).map_err(|_|"Cannot complete legacy gateway backup")?;}

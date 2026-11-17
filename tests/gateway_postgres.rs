@@ -567,6 +567,86 @@ async fn postgres_handoff_project_privacy_cookie_boundary_revalidation_and_impor
     .unwrap();
     assert!(store.authorized(OTHER, OTHER_SESSION, false).await);
     assert!(!store.authorized(OTHER, OTHER_SESSION, true).await);
+    // A rollback mirrors current native transient state, including new sessions,
+    // consumed tickets and in-progress uploads; project data is never restored.
+    {
+        let legacy = rusqlite::Connection::open(&legacy_file).unwrap();
+        legacy.execute("INSERT INTO tickets VALUES('consumed-before-cutover','old','proof','/',9999999999)",[]).unwrap();
+    }
+    store.put("sessions","native-created-session",&json!({"user_id":USER,"native_session":SESSION,"ce_cookie":"overleaf=native-preserved"}),now()+3600.).await.unwrap();
+    let partial_id = uuid::Uuid::new_v4().to_string();
+    store
+        .put(
+            "incoming",
+            &partial_id,
+            &json!({"user_id":USER,"name":"paper.zip","size":100,"received":42}),
+            now() + 3600.,
+        )
+        .await
+        .unwrap();
+    let partial = private
+        .path()
+        .join("imports")
+        .join(format!("{partial_id}.partial"));
+    std::fs::write(&partial, [1u8; 42]).unwrap();
+    let mirror = private.path().join("rollback.sqlite");
+    std::fs::copy(&legacy_file, &mirror).unwrap();
+    let mirrored = store.export_sqlite(&mirror).await.unwrap();
+    assert!(mirrored >= 2);
+    {
+        let legacy = rusqlite::Connection::open(&mirror).unwrap();
+        let cookie: String = legacy
+            .query_row(
+                "SELECT ce_cookie FROM sessions WHERE id='native-created-session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cookie, "overleaf=native-preserved");
+        let stale: i64 = legacy
+            .query_row(
+                "SELECT count(*)FROM tickets WHERE id='consumed-before-cutover'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale, 0);
+        let offset: i64 = legacy
+            .query_row(
+                "SELECT received FROM incoming WHERE id=?1",
+                [&partial_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(offset, 42);
+    }
+    assert_eq!(std::fs::read(partial).unwrap(), vec![1; 42]);
+    // Malformed native state causes an atomic rollback, not a partial mirror.
+    store
+        .put(
+            "sessions",
+            "invalid-rollback-session",
+            &json!({"user_id":USER}),
+            now() + 3600.,
+        )
+        .await
+        .unwrap();
+    assert!(store.export_sqlite(&mirror).await.is_err());
+    {
+        let legacy = rusqlite::Connection::open(&mirror).unwrap();
+        let total: i64 = legacy
+            .query_row(
+                "SELECT count(*)FROM sessions WHERE id='native-created-session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 1);
+    }
+    store
+        .delete("sessions", "invalid-rollback-session")
+        .await
+        .unwrap();
     let copy = private.path().join("gateway-state.copy");
     cbgpu_latex::operations::write_state_backup(&pool, &copy)
         .await

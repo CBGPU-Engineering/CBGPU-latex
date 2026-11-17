@@ -20,7 +20,7 @@ are native Rust. Build with `cargo build --locked --release`; TypeScript CE
 adapters still require `npm ci && npm run check && npm run build`. Mongo 8.0.34
 uses `GLIBC_TUNABLES=glibc.pthread.rseq=1` on this kernel; retain the pinned digest.
 
-The native candidate does not change running services. Configure
+Source maintenance commands do not automatically change running services. Configure
 `CBGPU_LATEX_SOURCE`, `CBGPU_LATEX_PRIVATE` and a private
 `CBGPU_LATEX_DATABASE_URL` in `~/.config/cbgpu/latex-rust.env` (mode 600). Prefer a
 dedicated login inheriting the migration's `cbgpu_latex` role; it only accesses
@@ -30,9 +30,10 @@ can select an unused loopback candidate port; the default is 3520.
 
 Before a separately approved cutover, back up the existing stack, validate
 `migrations/20261116121608_latex_native_gateway_state.sql` through the backend
-migration workflow, and run the native `import-legacy --apply` against a backup
-copy first. It reads SQLite in read-only mode and inserts existing IDs/cookies
-without overwriting newer PostgreSQL state. Repeating the import is safe.
+migration workflow, and validate read-only import using the isolated PG fixture.
+The library import preserves IDs/cookies and is idempotent. Production CLI
+`import-legacy --apply --quiescent` additionally requires a stopped gateway and
+an empty native namespace, preventing replay of consumed live tickets.
 `migrate --apply` exists for isolated fixtures/explicit maintenance and is never
 run on service startup. No account migration, rollover or project import runs
 implicitly. Keep Mongo/Redis/CE volumes, secrets and immutable live release in
@@ -87,3 +88,101 @@ Maintenance defaults to a plan until `--apply` is supplied.
 ## Source / license
 
 Overleaf CE is AGPL-3.0: https://github.com/overleaf/overleaf. The pinned official image contains its corresponding application source under `/overleaf`. Retrieve the exact version with `docker pull sharelatex/sharelatex@sha256:ada39211c54a1e748065834ec44d3a49094cc475c28d8b803a251901592a94b2` and `docker cp CONTAINER:/overleaf ./overleaf-source`. CBGPU's compile adapter replacing `services/clsi/app/js/LocalCommandRunner.js`, bridge and integration source are provided at `/cbgpu/source.zip`, together with these run instructions. No proprietary Pro code is included.
+
+## Reviewed native handoff
+
+`install --apply` provisions a new stack. **Do not use it to replace the running
+legacy service:** it can run Compose and rewrite active units. The handoff below
+keeps the existing CE/Mongo/Redis containers, mounts, secrets and project IDs.
+Only the two host brokers and backup unit change. Root coordinates activation.
+
+Preparation (safe while users work):
+
+1. Build/test the native release and editor asset. Run the isolated PG, compiler
+   sandbox and restore fixtures; none needs real projects. Build example:
+   `cargo build --locked --release` and `npm run build`.
+2. Set `CBGPU_LATEX_PRIVATE` to the **existing** private root and
+   `CBGPU_LATEX_SOURCE` to this reviewed checkout. Run the release binary's
+   `backup-legacy --apply`. It needs no native PostgreSQL schema and does not
+   change service units. Verify the completed private backup/restore test and
+   the platform database backup before applying the candidate SQL migration.
+3. Apply `migrations/20261116121608_latex_native_gateway_state.sql` through the
+   reviewed application-database workflow. Provision a separate private login
+   inheriting `cbgpu_latex`; keep its DSN only in mode-600
+   `~/.config/cbgpu/latex-rust.env` as `CBGPU_LATEX_DATABASE_URL`. This schema must
+   be in the application/Auth database, not the separate AI runtime database.
+   Keep `CBGPU_ACCOUNT_V2=0` until its separately verified rollout is coordinated.
+4. Run `stage-units --apply`. It snapshots the native ELF, corresponding source,
+   editor asset, rendered units and original unit files into an immutable private
+   `native-releases/<digest>` directory. It installs/starts/stops nothing. Inspect
+   its manifest and unit diff. Staged units require the private environment file;
+   they do not fall back to an administrator DSN or recreate the CE stack.
+5. Record the three CE/Mongo/Redis container IDs/start times/restart counts.
+   Confirm no unexpected unit drop-ins or alternate gateway process exists.
+
+Activation is a short, explicitly coordinated LaTeX traffic pause/reconnect. It
+is not advertised as a zero-interruption socket handoff. An editor WebSocket or
+upload must drain first. `cutover-status` reads only process/network/container
+metadata and prints counts; it never lists users/projects or kills anything.
+`compiler_requests`, `compiler_backlog` and `compile_containers` must all be zero.
+Queued requests matter: the old Python broker enters its jobs map only **after**
+waiting for a semaphore. Docker-container count alone cannot prove it is idle.
+
+Execute these steps individually after reviewing each result:
+
+```text
+cbgpu-latex cutover-status
+systemctl --user stop cbgpu-latex-backup.timer
+systemctl --user stop cbgpu-latex-gateway.service
+cbgpu-latex cutover-status
+```
+
+The stopped gateway must report PID 0, port free and zero connections. The compile
+broker must still report idle. If it is busy, **leave it running**, restart the old
+gateway and retry after the user finishes; do not interrupt active compiles.
+Then run the staged binary under the private environment file:
+
+```text
+cbgpu-latex import-legacy --apply --quiescent
+systemctl --user stop cbgpu-latex-compiler.service
+```
+
+Import reads the now-stable SQLite snapshot and preserves browser sessions,
+proofs, upload offsets/results and CE cookies. It refuses a running gateway and
+refuses a nonempty native transient namespace: importing while legacy writers
+consume tickets could resurrect single-use credentials. Do not bypass that guard.
+Install the reviewed staged `units/*` files in `~/.config/systemd/user` (mode 600),
+reload systemd, then start in order:
+
+```text
+systemctl --user daemon-reload
+systemctl --user start cbgpu-latex-compiler.service
+curl --fail --unix-socket EXISTING_PRIVATE_ROOT/run/compile.sock http://localhost/healthz
+systemctl --user start cbgpu-latex-gateway.service
+curl --fail http://127.0.0.1:3520/healthz
+```
+
+The native compiler health response includes queued/running counts, never IDs.
+Verify public HTTPS/cookie boundaries and preserved CE container identities before
+resuming traffic and `cbgpu-latex-backup.timer`. Do not run Compose, stop the CE
+stack, reset Mongo, rotate keys, clear imports or change project ownership.
+Back up the native state after validation. Existing GPU/notebook controllers are
+outside this procedure.
+
+Rollback also requires a traffic pause and a stopped/drained gateway. Before
+restoring the old unit, run the native binary's `export-legacy --apply --quiescent`
+under the private environment. It transactionally mirrors the five transient
+PostgreSQL tables back into the existing SQLite database: new native sessions and
+partial uploads survive, and consumed tickets stay consumed. A malformed record
+rolls the entire mirror back. Partial ZIP files, CE projects and source files are
+not edited. Keep the original gateway snapshot as the backup; the mirror is the
+current authoritative state for rollback.
+
+Wait for the native compile broker to drain before stopping it. Restore the saved
+`rollback-units` files, reload systemd, and start the old compiler/gateway. Normal
+code rollback **does not restore Mongo/files/Redis**, so projects created or edited
+after cutover remain. Restore the timer after health checks. A second forward
+attempt needs reviewed reconciliation of the now-stale native transient cache;
+blindly reimporting the original snapshot is forbidden. Legacy rollback preserves
+legacy approval behavior, not newly enabled account-V2 semantics; coordinate that
+feature separately rather than silently reverting external ownership access.

@@ -5,6 +5,7 @@ After=network-online.target
 WorkingDirectory=@LATEX_SOURCE@
 Environment=CBGPU_LATEX_SOURCE=@LATEX_SOURCE@
 Environment=CBGPU_LATEX_PRIVATE=@LATEX_PRIVATE@
+Environment=CBGPU_ACCOUNT_V2=0
 EnvironmentFile=-%h/.config/cbgpu/latex-rust.env
 ExecStart=@LATEX_BINARY@ gateway
 Restart=on-failure

@@ -13,7 +13,7 @@ async fn run() -> Result<()> {
     let action = args.first().map(String::as_str).unwrap_or("--help");
     if action == "--help" {
         println!(
-            "cbgpu-latex gateway|compiler|migrate|import-legacy|backup|restore-state|install|verify-restore|acl\nMaintenance defaults to a read-only plan; append --apply. Configure CBGPU_LATEX_PRIVATE, CBGPU_LATEX_SOURCE, CBGPU_LATEX_DATABASE_URL and CBGPU_ACCOUNT_V2. No project database/volume is reset."
+            "cbgpu-latex gateway|compiler|migrate|import-legacy|export-legacy|backup|backup-legacy|restore-state|stage-units|cutover-status|install|verify-restore|acl\nMaintenance defaults to a read-only plan; append --apply. Configure CBGPU_LATEX_PRIVATE, CBGPU_LATEX_SOURCE, CBGPU_LATEX_DATABASE_URL and CBGPU_ACCOUNT_V2. No project database/volume is reset."
         );
         return Ok(());
     }
@@ -23,7 +23,9 @@ async fn run() -> Result<()> {
     let private = std::env::var_os("CBGPU_LATEX_PRIVATE")
         .map(PathBuf::from)
         .unwrap_or_else(|| source.join("../private/latex"));
-    if !matches!(action, "gateway" | "compiler") && !args.iter().any(|v| v == "--apply") {
+    if !matches!(action, "gateway" | "compiler" | "cutover-status")
+        && !args.iter().any(|v| v == "--apply")
+    {
         println!(
             "{}",
             serde_json::json!({"action":action,"apply":false,"private_state":private,"preserves_projects":true,"message":"Explicit --apply required; candidate migrations and service activation require reviewed backup and approval"})
@@ -32,6 +34,27 @@ async fn run() -> Result<()> {
     }
     unsafe {
         libc::umask(0o077);
+    }
+    if action == "cutover-status" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&cbgpu_latex::cutover::activity(&private)?)
+                .map_err(|_| "Cannot serialize cutover status")?
+        );
+        return Ok(());
+    }
+    if action == "stage-units" {
+        let release = cbgpu_latex::cutover::stage(&source, &private)?;
+        println!(
+            "Staged immutable release and rollback units: {}. Nothing activated.",
+            release.display()
+        );
+        return Ok(());
+    }
+    if action == "backup-legacy" {
+        operations::backup_legacy(&private).await?;
+        println!("Private legacy LaTeX backup completed; no services changed");
+        return Ok(());
     }
     if action == "install" {
         return operations::install(&source, &private).await;
@@ -130,7 +153,29 @@ async fn run() -> Result<()> {
         pool,
         account_v2: std::env::var("CBGPU_ACCOUNT_V2").as_deref() == Ok("1"),
     };
+    if action == "export-legacy" {
+        if !args.iter().any(|v| v == "--quiescent") {
+            return Err(
+                "Rollback export requires --quiescent and a stopped/drained gateway".into(),
+            );
+        }
+        cbgpu_latex::cutover::require_gateway_stopped(&private)?;
+        let count = store.export_sqlite(&private.join("gateway.sqlite")).await?;
+        println!("Mirrored {count} transient records for rollback; projects and files unchanged");
+        return Ok(());
+    }
     if action == "import-legacy" {
+        if !args.iter().any(|v| v == "--quiescent") {
+            return Err("Import requires --quiescent after the legacy gateway has stopped; live import can replay consumed tickets".into());
+        }
+        cbgpu_latex::cutover::require_gateway_stopped(&private)?;
+        let existing: i64 = sqlx::query_scalar("SELECT count(*)FROM latex_gateway.state")
+            .fetch_one(&store.pool)
+            .await
+            .map_err(|_| "Cannot verify empty native transient namespace")?;
+        if existing != 0 {
+            return Err("Native state is not empty; reconcile under reviewed backup instead of replaying legacy tickets".into());
+        }
         let count = store.import_sqlite(&private.join("gateway.sqlite")).await?;
         println!("Imported {count} legacy transient records; project data and IDs unchanged");
         return Ok(());
