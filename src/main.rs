@@ -103,12 +103,29 @@ async fn run() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o666))
             .map_err(|_| "Cannot configure CE socket access")?;
+        let central_cpu = if cbgpu_latex::central_cpu::enabled()? {
+            let database = std::env::var("CBGPU_LATEX_DATABASE_URL")
+                .map_err(|_| "Private CPU authority database unavailable")?;
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(4)
+                .acquire_timeout(Duration::from_secs(5))
+                .connect(&database)
+                .await
+                .map_err(|_| "Private CPU authority unavailable")?;
+            Some(cbgpu_latex::central_cpu::CentralCPU {
+                pool,
+                private: private.clone(),
+            })
+        } else {
+            None
+        };
         let state = Compiler {
             private,
             image,
             docker: PathBuf::from("/usr/bin/docker"),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             limit: Arc::new(Semaphore::new(3)),
+            central_cpu,
         };
         return axum::serve(listener, state.router())
             .with_graceful_shutdown(cbgpu_latex::shutdown::signal())

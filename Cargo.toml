@@ -6,6 +6,8 @@ rust-version = "1.88"
 license = "AGPL-3.0-only"
 
 [dependencies]
+hmac = "0.12"
+getrandom = "0.3"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli", "deflate"] }

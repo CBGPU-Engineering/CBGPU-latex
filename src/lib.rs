@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod central_cpu;
 pub mod compiler;
 pub mod cutover;
 pub mod gateway;

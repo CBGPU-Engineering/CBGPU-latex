@@ -70,6 +70,7 @@ async fn real_tex_pdf_startup_script_isolation_symlink_and_timeout() {
         docker: "/usr/bin/docker".into(),
         jobs: Arc::new(Mutex::new(HashMap::new())),
         limit: Arc::new(Semaphore::new(1)),
+        central_cpu: None,
     };
     let jobs = compiler.jobs.clone();
     let limit = compiler.limit.clone();

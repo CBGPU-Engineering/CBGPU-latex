@@ -315,10 +315,22 @@ impl Gateway {
     async fn api(&self, req: Request, action: &str) -> WebResult<Response> {
         let user = self.identity(req.headers()).await?;
         if action == "projects" && req.method() == Method::GET {
-            return Ok(json_response(
-                self.bridge("projects", &json!({"user":user})).await?,
-                StatusCode::OK,
-            ));
+            let mut result = self.bridge("projects", &json!({"user":user})).await?;
+            let central = crate::central_cpu::CentralCPU {
+                pool: self.store.pool.clone(),
+                private: self.private.clone(),
+            };
+            if let Some(rows) = result["projects"].as_array_mut() {
+                for row in rows {
+                    if let Some(id) = row["id"].as_str()
+                        && let Ok(Some(mode)) = central.mode(id)
+                    {
+                        row["execution_mode"] = mode["execution_mode"].clone();
+                        row["allocation_school_id"] = mode["school_id"].clone();
+                    }
+                }
+            }
+            return Ok(json_response(result, StatusCode::OK));
         }
         if req.method() != Method::POST {
             return Err(error(StatusCode::METHOD_NOT_ALLOWED, "POST required"));
@@ -464,7 +476,39 @@ impl Gateway {
             .map_err(|_| error(StatusCode::PAYLOAD_TOO_LARGE, "Request too large"))?;
         let data: Value = serde_json::from_slice(&bytes)
             .map_err(|_| error(StatusCode::BAD_REQUEST, "JSON required"))?;
-        let result = match action {
+        let mut result = match action {
+            "allocate" => {
+                if data["confirmed"] != true {
+                    return Err(error(
+                        StatusCode::BAD_REQUEST,
+                        "Explicit allocation confirmation required",
+                    ));
+                }
+                let project = data["project"]
+                    .as_str()
+                    .filter(|p| project_id(p))
+                    .ok_or(error(StatusCode::BAD_REQUEST, "Invalid project"))?;
+                let school = data["allocation_school_id"]
+                    .as_str()
+                    .filter(|s| {
+                        !s.is_empty()
+                            && s.len() <= 100
+                            && s.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    })
+                    .ok_or(error(
+                        StatusCode::BAD_REQUEST,
+                        "Explicit selected school required",
+                    ))?;
+                let owner = self
+                    .bridge("project-authority", &json!({"user":user,"project":project}))
+                    .await?;
+                let central = crate::central_cpu::CentralCPU {
+                    pool: self.store.pool.clone(),
+                    private: self.private.clone(),
+                };
+                central.allocate(user["id"].as_str().unwrap_or(""),user["session"].as_str().unwrap_or(""),owner["owner_id"].as_str().unwrap_or(""),project,school).await.map_err(|_|error(StatusCode::FORBIDDEN,"Only an owned never-executed personal draft can attach a funded school allocation"))?
+            }
             "upload-begin" => {
                 let size = data["size"]
                     .as_u64()
@@ -619,6 +663,52 @@ impl Gateway {
             }
             _ => return Err(error(StatusCode::NOT_FOUND, "Not found")),
         };
+        if matches!(action, "new" | "import")
+            && crate::central_cpu::enabled().map_err(|_| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Project allocation configuration unavailable",
+                )
+            })?
+            && let Some(id) = result["id"]
+                .as_str()
+                .filter(|p| project_id(p))
+                .map(str::to_owned)
+        {
+            let central = crate::central_cpu::CentralCPU {
+                pool: self.store.pool.clone(),
+                private: self.private.clone(),
+            };
+            if central
+                .mode(&id)
+                .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "Project mode unavailable"))?
+                .is_none()
+                && !self
+                    .store
+                    .authorized(
+                        user["id"].as_str().unwrap_or(""),
+                        user["session"].as_str().unwrap_or(""),
+                        true,
+                    )
+                    .await
+            {
+                central
+                    .register_unassigned(&id, user["id"].as_str().unwrap_or(""))
+                    .map_err(|_| {
+                        error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "Project saved; CPU mode requires operator review",
+                        )
+                    })?;
+            }
+            if let Some(mode) = central
+                .mode(&id)
+                .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "Project mode unavailable"))?
+            {
+                result["execution_mode"] = mode["execution_mode"].clone();
+                result["allocation_school_id"] = mode["school_id"].clone();
+            }
+        }
         Ok(json_response(
             result,
             if matches!(action, "new" | "import") {
@@ -834,27 +924,64 @@ async fn handler(State(state): State<Gateway>, mut req: Request) -> WebResult<Re
                 trash,
             )
             .await?;
-        if ((req.method() == Method::POST && route == format!("/project/{id}/compile"))
+        let compute_request = (req.method() == Method::POST
+            && route == format!("/project/{id}/compile"))
             || (req.method() == Method::GET
                 && [
                     format!("/project/{id}/wordcount"),
                     format!("/project/{id}/sync/code"),
                     format!("/project/{id}/sync/pdf"),
                 ]
-                .contains(&route)))
-            && !state
+                .contains(&route));
+        if compute_request {
+            let central = crate::central_cpu::CentralCPU {
+                pool: state.store.pool.clone(),
+                private: state.private.clone(),
+            };
+            let bound = central.bound(&id).map_err(|_| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "CPU project allocation unavailable",
+                )
+            })?;
+            let unassigned = central
+                .mode(&id)
+                .map_err(|_| {
+                    error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "CPU project mode unavailable",
+                    )
+                })?
+                .is_some_and(|m| m["execution_mode"] == "UNASSIGNED_V1");
+            if unassigned {
+                return Err(error(
+                    StatusCode::FORBIDDEN,
+                    "Attach an authorized CPU allocation before compiling; project retained",
+                ));
+            }
+            let legacy = state
                 .store
                 .authorized(
                     session["user_id"].as_str().unwrap_or(""),
                     session["native_session"].as_str().unwrap_or(""),
                     true,
                 )
-                .await
-        {
-            return Err(error(
-                StatusCode::FORBIDDEN,
-                "Your projects remain available; school compute permission is required to compile",
-            ));
+                .await;
+            if bound || !legacy {
+                if !crate::central_cpu::enabled().map_err(|_| {
+                    error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "CPU allocation unavailable",
+                    )
+                })? {
+                    return Err(error(
+                        StatusCode::FORBIDDEN,
+                        "Your projects remain available; CPU allocation is required to compile",
+                    ));
+                }
+                let owner=state.bridge("project-authority",&json!({"user":{"id":session["user_id"],"email":"session@cbgpu.com"},"project":id})).await?;
+                central.prepare(session["user_id"].as_str().unwrap_or(""),session["native_session"].as_str().unwrap_or(""),owner["owner_id"].as_str().unwrap_or(""),&id).await.map_err(|_|error(StatusCode::FORBIDDEN,"Central CPU allocation or compile admission unavailable; projects retained"))?;
+            }
         }
     }
     let mut headers = filtered_headers(req.headers(), true);

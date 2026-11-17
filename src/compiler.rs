@@ -33,6 +33,7 @@ pub struct Compiler {
     pub docker: PathBuf,
     pub jobs: Arc<Mutex<HashMap<String, JobState>>>,
     pub limit: Arc<Semaphore>,
+    pub central_cpu: Option<crate::central_cpu::CentralCPU>,
 }
 #[derive(Debug)]
 pub struct Validated {
@@ -429,6 +430,59 @@ async fn run(State(state): State<Compiler>, Json(data): Json<Value>) -> axum::re
         Ok(v) => v,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error":e}))).into_response(),
     };
+    let project = data["projectId"].as_str().unwrap_or("");
+    let directory_name = job
+        .directory
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let directory_project = directory_name
+        .get(..24)
+        .filter(|s| s.bytes().all(|b| b.is_ascii_hexdigit()));
+    if let Some(candidate) = directory_project
+        && state
+            .private
+            .join("central-cpu-modes")
+            .join(format!("{candidate}.json"))
+            .exists()
+        && candidate != project
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error":"Compile project allocation mismatch"})),
+        )
+            .into_response();
+    }
+
+    let marker = project.len() == 24
+        && project.bytes().all(|b| b.is_ascii_hexdigit())
+        && state
+            .private
+            .join("central-cpu-modes")
+            .join(format!("{project}.json"))
+            .exists();
+    let central_context = if marker {
+        if directory_project != Some(project) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error":"Compile directory does not match sealed project"})),
+            )
+                .into_response();
+        }
+        match state
+            .central_cpu
+            .as_ref()
+            .ok_or("Central CPU broker is disabled")
+            .and_then(|a| {
+                a.claim(project, &job.id)
+                    .map_err(|_| "Authenticated CPU admission missing")
+            }) {
+            Ok(v) => Some(v),
+            Err(e) => return (StatusCode::FORBIDDEN, Json(json!({"error":e}))).into_response(),
+        }
+    } else {
+        None
+    };
     let id = job.id.clone();
     {
         let mut jobs = state.jobs.lock().await;
@@ -444,7 +498,62 @@ async fn run(State(state): State<Compiler>, Json(data): Json<Value>) -> axum::re
     // Detached cleanup survives a browser disconnect; every sandbox is removed.
     let (tx, rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let result = state.run_job(job).await;
+        let result = if let Some(context) = central_context {
+            let authority = state
+                .central_cpu
+                .as_ref()
+                .expect("checked central authority");
+            match authority.acquire(&context).await {
+                Err(e) => Err(e),
+                Ok(context) => {
+                    let instance = job.name.clone();
+                    match authority.start(&context, &instance).await {
+                        Err(e) => Err(e),
+                        Ok(()) => {
+                            let control = state.clone();
+                            let heartbeat = authority.clone();
+                            let heartbeat_context = context.clone();
+                            let heartbeat_name = instance.clone();
+                            let guard = tokio::spawn(async move {
+                                loop {
+                                    tokio::time::sleep(Duration::from_secs(5)).await;
+                                    match heartbeat
+                                        .heartbeat(&heartbeat_context, &heartbeat_name)
+                                        .await
+                                    {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            control.remove(&heartbeat_name).await;
+                                            break;
+                                        }
+                                        Err(_) => { /* Do not free quota or guess runtime stopped on authority outage. */
+                                        }
+                                    }
+                                }
+                            });
+                            let result = state.run_job(job).await;
+                            guard.abort();
+                            if let Ok(out) = state
+                                .docker(&[
+                                    "ps".into(),
+                                    "-aq".into(),
+                                    "--filter".into(),
+                                    format!("name=^{instance}$"),
+                                ])
+                                .await
+                                && out.status.success()
+                                && out.stdout.is_empty()
+                            {
+                                let _ = authority.release(&context, &instance).await;
+                            }
+                            result
+                        }
+                    }
+                }
+            }
+        } else {
+            state.run_job(job).await
+        };
         state.jobs.lock().await.remove(&id);
         let _ = tx.send(result);
     });

@@ -48,6 +48,13 @@ http.createServer(async(req,res)=>{
   }else if(req.url==='/projects'){
    const projects=await Project.find({...(input.includeTrashed?{}:{trashed:{$ne:user._id}}),$or:[{owner_ref:user._id},{collaberator_refs:user._id},{readOnly_refs:user._id}]}).select('_id name lastUpdated owner_ref compiler').sort({lastUpdated:-1}).limit(200).lean().exec()
    result={projects:projects.map(p=>({id:String(p._id),name:p.name,updated_at:p.lastUpdated,compiler:p.compiler,role:String(p.owner_ref)===String(user._id)?'owner':'collaborator'}))}
+  }else if(req.url==='/project-authority'){
+   if(!/^[a-f0-9]{24}$/.test(input.project||''))throw Error('Invalid project');
+   const project=await Project.findOne({_id:input.project,trashed:{$ne:user._id},$or:[{owner_ref:user._id},{collaberator_refs:user._id}]}).select('_id owner_ref').lean().exec();
+   if(!project){res.writeHead(404);return res.end('{}')}
+   const mapping=await mongoose.connection.db.collection('cbgpu_users').findOne({overleafId:project.owner_ref});
+   if(!mapping||!/^[a-f0-9-]{36}$/.test(String(mapping._id)))throw Error('Project owner mapping unavailable');
+   result={project_id:String(project._id),owner_id:String(mapping._id)}
   }else if(req.url==='/trash'){
    if(!/^[a-f0-9]{24}$/.test(input.project||'')){res.writeHead(404);return res.end('{}')}
    const project=await Project.findOne({_id:input.project,owner_ref:user._id}).select('_id').lean().exec()
