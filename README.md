@@ -27,6 +27,13 @@ real compile isolation test additionally requires the reviewed pinned TeX image:
 `cargo test --locked --test compiler_sandbox -- --ignored`. Neither suite mounts
 existing project volumes or connects to the production database.
 
+`cargo test --locked --test school_http_stage -- --ignored` additionally checks
+fresh synthetic School B sessions against an explicitly prepared isolated Auth
+clone. Set `CBGPU_LATEX_TEST_STAGE_DSN_FILE` and
+`CBGPU_LATEX_TEST_STAGE_ACTORS_FILE` to private fixture files; the test refuses
+production addresses and uses a restricted gateway role. It reads no project
+state and verifies that school membership does not grant CBsh compile capacity.
+
 ## Deployment
 
 [CBGPU-backend](https://github.com/CBGPU-Engineering/CBGPU-backend) pins this repository as its `latex/`
